@@ -3,6 +3,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils.six.moves import input
 from ...registries import registry
 
+CLI_PARAM_ALIAS_PREFIX = '--alias_prefix'
+CLI_PARAM_INDEX_PREFIX = '--index_prefix'
+CLI_PARAM_ASYNCHRONOUS_REBUILD = '--async'
+
 
 class Command(BaseCommand):
     help = 'Manage elasticsearch index.'
@@ -42,6 +46,23 @@ class Command(BaseCommand):
             dest='action',
             const='rebuild',
             help="Delete the indices and then recreate and populate them"
+        )
+        parser.add_argument(
+            CLI_PARAM_ALIAS_PREFIX,
+            dest=CLI_PARAM_ALIAS_PREFIX,
+            help=""
+        )
+        parser.add_argument(
+            CLI_PARAM_INDEX_PREFIX,
+            dest=CLI_PARAM_INDEX_PREFIX,
+            help=""
+        )
+        parser.add_argument(
+            CLI_PARAM_ASYNCHRONOUS_REBUILD,
+            dest=CLI_PARAM_ASYNCHRONOUS_REBUILD,
+            action='store_true',
+            default=False,
+            help=""
         )
         parser.add_argument(
             '-f',
@@ -87,7 +108,7 @@ class Command(BaseCommand):
         for doc in registry.get_documents(models):
             qs = doc().get_queryset()
             self.stdout.write("Indexing {} '{}' objects".format(
-                qs.count(), doc.django.model.__name__)
+                qs.count(), doc._doc_type.model.__name__)
             )
             doc().update(qs)
 
@@ -108,8 +129,9 @@ class Command(BaseCommand):
         return True
 
     def _rebuild(self, models, options):
-        if not self._delete(models, options):
-            return
+        if not options[CLI_PARAM_ASYNCHRONOUS_REBUILD]:
+            if not self._delete(models, options):
+                return
 
         self._create(models, options)
         self._populate(models, options)
@@ -131,7 +153,21 @@ class Command(BaseCommand):
         elif action == 'delete':
             self._delete(models, options)
         elif action == 'rebuild':
+            # async rebuild require an alias prefix 
+            if options[CLI_PARAM_ASYNCHRONOUS_REBUILD] and not options[CLI_PARAM_ALIAS_PREFIX]:
+                raise CommandError("Must specify {alias_prefix} parameter if using asynchronous rebuild.".format(
+                    alias_prefix=CLI_PARAM_ALIAS_PREFIX))
+            if not options[CLI_PARAM_ASYNCHRONOUS_REBUILD] and (
+                options[CLI_PARAM_ALIAS_PREFIX] or 
+                options[CLI_PARAM_INDEX_PREFIX]
+            ):
+                raise CommandError("Synchronous rebuild does not use {alias_prefix} or {index_prefix}.".format(
+                    alias_prefix=CLI_PARAM_ALIAS_PREFIX,
+                    index_prefix=CLI_PARAM_INDEX_PREFIX
+                    ))
+            
             self._rebuild(models, options)
+            
         else:
             raise CommandError(
                 "Invalid action. Must be one of"
